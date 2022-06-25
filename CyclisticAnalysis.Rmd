@@ -1,0 +1,258 @@
+---
+title: 'Google Data Analytics Case Study # 1: Cyclistic'
+author: "Sophie Bennett"
+date: "1/23/2022"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE, root.dir = TRUE}
+#install necessary packages
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+
+#set up working directory
+getwd()
+knitr::opts_knit$set(root.dir = "/home/general/Documents/Google Analytics Certificate/Cyclistic Case Study/Working Directory/")
+getwd()
+```
+
+## Overview
+In this case study, I will be completing a task as a junior data analyst for the fictional bike sharing company "Cyclistic." The Chicago-based company owns over 5,000 geotracked bicycles that can be unlocked from any one their 692 stations and returned to any other station. They offer single ride passes, day passes, and annual memberships. Single trip and day pass users are considered "casual riders" and annual membership owners are considered "members."
+
+I will be following the data analysis process outlined within the Google Data Analytics Certificate Program: Ask, Prepare, Process, Analyze, Share, and Act.
+
+## Ask
+### Business Task
+
+Our financial analysts have found that Cyclistic members are more profitable than casual riders, so maximizing the number of annual memberships is key to Cyclistic’s continued growth. 
+
+Our marketing director would like to produce a campaign to encourage casual riders to upgrade to annual memberships. In order to do this, we need to explore the differences in the behavior of casual riders and annual members and identify reasons why a casual rider might like to upgrade to an annual membership.
+
+My task is to find these differences and share them with the executive team.
+
+## Prepare
+### Description of the Data
+
+I will be using Cyclysitc's historical trip data for 2021. This is internal data collected by the company and includes all trips that occurred during the last year. Since it is internal data collected by the company itself, I have little reason to doubt it's trustworthiness; and because it contains the entire population, sampling bias is a non-issue.
+
+We are, however, not allowed to use any personally identifiable information about our customers. This means we cannot use credit card information to identify those who repeatedly purchase day passes or to differentiate between customers who live in Chicago and those who are just visiting. This is potentially useful information that we will have to do without due to the limitations of the data we are allowed to collect.
+
+Below, I read in the original CSV files for each month:
+```{r load cyclistic data, message = FALSE}
+#Read CSV files
+cyclistic_2021_01 <- read_csv("202101-divvy-tripdata.csv")
+cyclistic_2021_02 <- read_csv("202102-divvy-tripdata.csv")
+cyclistic_2021_03 <- read_csv("202103-divvy-tripdata.csv")
+cyclistic_2021_04 <- read_csv("202104-divvy-tripdata.csv")
+cyclistic_2021_05 <- read_csv("202105-divvy-tripdata.csv")
+cyclistic_2021_06 <- read_csv("202106-divvy-tripdata.csv")
+cyclistic_2021_07 <- read_csv("202107-divvy-tripdata.csv")
+cyclistic_2021_08 <- read_csv("202108-divvy-tripdata.csv")
+cyclistic_2021_09 <- read_csv("202109-divvy-tripdata.csv")
+cyclistic_2021_10 <- read_csv("202110-divvy-tripdata.csv")
+cyclistic_2021_11 <- read_csv("202111-divvy-tripdata.csv")
+cyclistic_2021_12 <- read_csv("202112-divvy-tripdata.csv")
+```
+
+### Column Descriptions
+The data contain nine variables and they have all remained consistent throughout the entire year:
+
+Variable Name | Description
+-------------|---------------
+ride_id | Unique Ride ID
+rideable_type | The type of bicycle being ridden (classic_bike, docked_bike, electric_bike)  
+started_at | Start time (YYY-MM-DD HH:MM:SS)
+ended_at | End Time (YYY-MM-DD HH:MM:SS)
+start_lat | Starting Latitude  
+start_lng | Starting Longitude
+end_lat | Ending Latitude
+end_lng | Ending Longitude
+member_casual | Member Type (casual, member)
+
+Below, I inspect the column names and confirm that they are the same for each month.
+```{r inspect the column names}
+#Inspect Column Names
+colnames(cyclistic_2021_01)
+
+#Test if Column Names are Identical for all Months
+months <- list("01","02","03","04","05","06","07","08","09","10","11","12")
+
+columnCompareFunction <- function(myMonth){
+  identical(colnames(cyclistic_2021_01), colnames(get(paste("cyclistic_2021_", myMonth, sep = ""))))
+}
+
+sapply(months,columnCompareFunction)
+```
+
+## Process
+Before analyzing the data, I must combine each month into a single data set for the year, calculate some additional fields for my analysis, and address a few issues in the data.
+
+Here, I combine each data set to create a single data frame for the entire year.
+```{r combine data, remove orignials from environment, message = FALSE}
+#Combine into one data set
+cyclistic21 <- bind_rows(cyclistic_2021_01,cyclistic_2021_02,cyclistic_2021_03,cyclistic_2021_04,cyclistic_2021_05,cyclistic_2021_06,cyclistic_2021_07,cyclistic_2021_08,cyclistic_2021_09,cyclistic_2021_10,cyclistic_2021_11,cyclistic_2021_12)
+
+#Remove monthly data sets from environment to keep it clean
+rm(cyclistic_2021_01, cyclistic_2021_02, cyclistic_2021_03, cyclistic_2021_04, cyclistic_2021_05, cyclistic_2021_06, cyclistic_2021_07, cyclistic_2021_08, cyclistic_2021_09, cyclistic_2021_10, cyclistic_2021_11, cyclistic_2021_12)
+```
+
+### Data Issue: Missing Data
+A considerable number of entries are missing start station (690,809) and/or end station (739,170) names. If Cyclistic were a real company, I would inquire about these missing entries and decide if it would be appropriate to remove them. Perhaps these bikes are coming from or going to HQ for inspection? But for now I will leave them in as these variables are not required for my analysis, so entries without them are still useful. No entries are missing start time, end time, or member type.
+
+Below, I inspect each variable and look for missing data
+```{r continue to inspect the data)}
+#Summary Statistics
+summary(cyclistic21)
+#Frequency of Bike Types
+table(cyclistic21$rideable_type)
+#Frequency of Membership Types
+table(cyclistic21$member_casual)
+
+#How many missing Start Station Names?
+sum(is.na(cyclistic21$start_station_name))
+#How many missing End Station Names?
+sum(is.na(cyclistic21$end_station_name))
+#How many missing Membership Types?
+sum(is.na(cyclistic21$member_casual))
+#How many missing Start Times?
+sum(is.na(cyclistic21$started_at))
+#How many missing End Times?
+sum(is.na(cyclistic21$ended_at))
+```
+
+Below, I add some calculated fields for ride length, day of the week, and month to aid my analysis.
+```{r Add Calculated Fields, message = FALSE}
+#calculate physical distance
+#cyclistic21$distance <- distm(c(start_lng, start_lat), c(end_lng, end_lat), fun = distHaversine)
+
+# Add a field for the date
+cyclistic21$date <- as.Date(cyclistic21$started_at)
+# Add a field for the month
+cyclistic21$month <- format(as.Date(cyclistic21$date), "%m")
+# Add a field for the day of the week
+cyclistic21$day_of_week <- format(as.Date(cyclistic21$date), "%A")
+
+# Put the days of the week in order
+cyclistic21$day_of_week <- ordered(cyclistic21$day_of_week, levels=c("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"))
+
+# Calculate ride length (in minutes) and convert it to numeric
+cyclistic21$ride_length <- as.numeric(as.character(difftime(cyclistic21$ended_at,cyclistic21$started_at, units = "mins")))
+
+#Check that ride_length is numeric
+is.numeric(cyclistic21$ride_length)
+```
+
+### Data Issue: Negative Ride Lengths & Exceptionally Long Ride Lengths
+There are 653 entries with ride lengths less than or equal to zero. For this case study, I will remove them. However, if this were a real task at a real company, I would ask to learn how this data is recorded and seek to understand how this sort of error might have occurred and how it might best be corrected or accounted for.
+
+After reviewing ride lengths, I found that 0.3% of rides exceed 4 hours. Exceptional ride lengths like these will be left out of the visualizations so that we can get a better look at more typical riders and the median will be the preferred measure of center since ride length is so heavily skewed right.
+
+Here, I take a look at the summary statistics for ride length and remove the observations that are less or equal to zero.
+```{r inspect ride length}
+#How many rides are less than or equal to 0?
+sum(cyclistic21$ride_length <= 0)
+#How many rides are longer than 4 hours?
+sum(cyclistic21$ride_length > 240)
+
+#Remove entries with negative ride lengths
+cyclistic21_clean <- cyclistic21[!(cyclistic21$ride_length<=0),]
+
+#Summary statistics for Ride Length
+summary(cyclistic21_clean$ride_length)
+```
+
+### Export Data to CSV for Visulization in Tableu
+Here I export the data so I can use it to create dashboards in Tableau
+```{r}
+write.csv(cyclistic21_clean,"/home/general/Documents/Google Analytics Certificate/Cyclistic Case Study/Working Directory/cyclistic21.csv", row.names = FALSE)
+```
+
+
+## Analyze
+### Summary Statistics
+Below, I provide summary statistics for ride length by member type as well as a comparison of median ride length by member type for each month and each day of the week.
+```{r analyze the data}
+# Compare ride length of members and casual users
+aggregate(cyclistic21_clean$ride_length ~ cyclistic21_clean$member_casual, FUN = median) #best measure
+#Compare minimum ride lengths between member types
+aggregate(cyclistic21_clean$ride_length ~ cyclistic21_clean$member_casual, FUN = min)
+#Compare maximum ride lengths between member types
+aggregate(cyclistic21_clean$ride_length ~ cyclistic21_clean$member_casual, FUN = max)
+
+# Average Ride Time ~ Rider Type by Day of Week
+aggregate(cyclistic21_clean$ride_length ~ cyclistic21_clean$member_casual + cyclistic21_clean$day_of_week, FUN = median)
+
+# Average Ride Time ~ Rider Type by Month
+aggregate(cyclistic21_clean$ride_length ~ cyclistic21_clean$member_casual + cyclistic21_clean$month, FUN = median)
+
+#Frequency Table: Member Type by Day of Week
+table(cyclistic21_clean$member_casual, cyclistic21_clean$day_of_week)
+#Frequency Table: Member Type by Day of Month
+table(cyclistic21_clean$member_casual, cyclistic21_clean$month)
+```
+
+## Share
+### Frequency of Rides by Rider Type
+```{r bar graph: rider type by day, fig.cap = "We can see from this plot that members take more rides than casual riders during the week, and casual riders outnumber members on weekends. This may suggest that our members are more likely to be using Cyclistic bicycles for their commutes and casual riders are more likely to be using them for leisure activities. It might be a good marketing strategy to highlight the usefulness of using our bikes for commutes.", message = FALSE, warning = FALSE}
+ggplot(cyclistic21_clean, aes(x=day_of_week, fill=member_casual)) +
+  geom_bar(position=position_dodge(), color = "white") +
+  scale_fill_manual(values=c('#25aafa','#fa7525')) +
+  theme_minimal() +
+  labs(title = "Frequency of Rides", subtitle =  "Casual Riders vs Members by Weekday", fill = "Type of Rider") + 
+  xlab("Weekday") +
+  ylab("Count")
+```
+
+```{r bar graph: rider type by month, fig.cap = "Here we find that members seem more likely to continue using Cyclistic bikes into the colder months than casual riders. In winter, it seems less likely that anyone will be riding a bike for leisure activities.", message = FALSE, warning = FALSE}
+ggplot(cyclistic21_clean, aes(x=month, fill=member_casual)) +
+  geom_bar(position=position_dodge(), color = "white") +
+  scale_fill_manual(values=c('#25aafa','#fa7525')) +
+  theme_minimal() +
+  labs(title = "Frequency of Rides", subtitle =  "Casual Riders vs Members by Month", fill = "Membership") + 
+  xlab("Month") +
+  ylab("Count")
+```
+
+### Length of Rides by Rider Type
+```{r histogram rider type, fig.cap = "We can see that the distribution of ride length is heavily skewed to the right--more so than even this plot shows, the cut off on the x-axis is set to four hours, some values exceed 24 hours or more. This let's us know that the median is a more appropriate measure of center than the mean, as relatively few exceptionally long rides may over inflate the mean. This also suggests that box plots might be a more useful way to visualize this data.", message = FALSE, warning = FALSE}
+#Histogram: Ride Length by Member Type
+ggplot(cyclistic21_clean, aes(x=ride_length, fill=member_casual)) +
+  geom_histogram(position = "dodge") +
+  scale_fill_manual(values=c('#25aafa','#fa7525')) +
+  xlim(0, 240) + #leave out values greater than 4 hours
+  xlab("Ride Length (Hours)") +
+  ylab("Frequency") +
+  labs(title = "Ride Length", subtitle = "Casual Riders vs Members", fill = "Membership") +
+  theme_minimal()
+```
+
+```{r box plots by day, fig.cap="Casual riders tend to take longer rides than members, and this pattern holds steady across every day of the week.", message = FALSE, warning = FALSE}
+ggplot(cyclistic21_clean, aes(x=day_of_week, y=ride_length, fill = member_casual)) +
+  geom_boxplot(outlier.shape = NA) +
+  labs(title = "Length of Rides", subtitle = "Casual Riders vs Members by Weekday", fill = "Membership") +
+  scale_fill_manual(values=c('#25aafa','#fa7525')) +
+  xlab("Weekday") +
+  ylab("Ride Length (Hours)") +
+  ylim(0, 55) + #leave out values greater than 55 mins
+  theme_minimal()
+```
+
+```{r box plots by month, fig.cap="It seems that casual riders have a tendency to take longer rides than members throughout the year, and both membership types seem to take slightly longer rides in the spring months.", message = FALSE, warning = FALSE}
+ggplot(cyclistic21_clean, aes(x=month, y=ride_length, fill = member_casual)) +
+  geom_boxplot(outlier.shape = NA) +
+  labs(title = "Length of Rides", subtitle = "Casual Riders vs Members by Month", fill = "Membership") +
+  scale_fill_manual(values=c('#25aafa','#fa7525')) +
+  xlab("Month") +
+  ylab("Ride Length (Hours)") +
+  ylim(0, 55) + #leave out values greater than 55 mins
+  theme_minimal()
+```
+
+## Act
+### My Conclusion
+I have found that members seem to take more rides than casual riders during weekdays and casual riders tend to take more rides than members during the weekends. Additionally, casual riders tend to take longer rides than members do. These observations might suggest that membership owners are more likely to use Cyclistic bikes for their daily commutes, while casual riders are using the bikes for leisure. It might be a good strategy to highlight the convenience of using Cyclistic bikes for the daily commute in future marketing materials.
+
+END
